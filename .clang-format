@@ -1,6 +1,8 @@
 BasedOnStyle: Google
+# Two below options to be used with patched version of clang-format, otherwise set false
 BinPackArguments: false
 BinPackParameters: false
 ColumnLimit: 120
 DerivePointerAlignment: false
 PointerAlignment: Right
+Standard: Cpp03
