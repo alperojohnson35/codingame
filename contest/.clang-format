@@ -1,5 +1,7 @@
 BasedOnStyle: Google
 # Two below options to be used with patched version of clang-format, otherwise set false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
 BinPackArguments: false
 BinPackParameters: false
 ColumnLimit: 120
