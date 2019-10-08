@@ -293,8 +293,8 @@ struct Board {
           e.target = v;
           e.action = "DIG " + to_string(e.target.x) + " " + to_string(e.target.y) + " creuse";
           e.flaire = false;
-          // grid[v.x][v.y].ore--;
-          grid[v.x][v.y].ore = 0;
+          grid[v.x][v.y].ore--;
+          // grid[v.x][v.y].ore = 0;
           break;
         }
       }
