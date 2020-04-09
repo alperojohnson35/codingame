@@ -1,12 +1,11 @@
 // 235
 
-#pragma GCC target("avx")                   // small optimization
-#pragma GCC optimize("O3")                  // +44k killer optimization with "inline __attribute__ (( always_inline,
-                                            // visibility("protected") ))" and "inline"
-#pragma GCC optimize("omit-frame-pointer")  // good optimization
-#pragma GCC optimize("unsafe-math-optimizations")  // not really useful it seems
-#pragma GCC optimize("unroll-all-loops")           // good optimization
-#pragma GCC optimize("inline")                     // killer optimization with O3
+#pragma GCC target("avx")
+#pragma GCC optimize("O3")
+#pragma GCC optimize("omit-frame-pointer")
+#pragma GCC optimize("unsafe-math-optimizations")
+#pragma GCC optimize("unroll-all-loops")
+#pragma GCC optimize("inline")
 
 #include <stdlib.h>
 #include <string.h>
@@ -103,7 +102,7 @@ struct Pos {
   inline Pos operator-(const Pos &c) const { return Pos(this->x - c.x, this->y - c.y); }
   inline Pos operator*(const int &c) const { return Pos(this->x * c, this->y * c); }
   inline Pos operator/(const int &c) const { return Pos(this->x / c, this->y / c); }
-  virtual void serialize(ostream &os) const { os << " [" << x << "," << y << "] " << wall; }
+  virtual void serialize(ostream &os) const { os << " [" << x << "," << y << "] "; }
 };
 ostream &operator<<(ostream &os, const Pos &c) {
   c.serialize(os);
@@ -121,14 +120,14 @@ struct Board {
   int N, P, turn, maxDepth;
   set<int> alive;
   array<Pos, 4> players;
-  array<int, H * W> grid;
+  array<array<int, H>, W> grid;
   array<Pos, 4> dir = {Pos{0, -1}, Pos{0, 1}, Pos{-1, 0}, Pos{1, 0}};
   map<Pos, string> adir = {{Pos{0, -1}, "UP"}, {Pos{0, 1}, "DOWN"}, {Pos{-1, 0}, "LEFT"}, {Pos{1, 0}, "RIGHT"}};
   bool first = true;
 
   Board() {
     turn = 0;
-    maxDepth = 1;
+    maxDepth = 3;
     memset(&grid, 0, sizeof(grid));
   }
 
@@ -136,7 +135,7 @@ struct Board {
     for (int j(0); j < H; ++j) {
       string s("");
       for (int i(0); i < W; ++i) {
-        s += to_string(grid[i + W * j]);
+        s += to_string(grid[i][j]);
       }
       cerr << s << endl;
     }
@@ -151,20 +150,22 @@ struct Board {
       cin.ignore();
       if (players[i].x == -1) {
         if (alive.count(i)) {
-          for (auto g : grid) {
-            if (g == i + 1) g = 0;
+          for (auto &r : grid) {
+            for (auto &c : r) {
+              if (c == i + 1) c = 0;
+            }
           }
           alive.erase(alive.find(i));
         }
       } else {
-        grid[players[i].idx()] = i + 1;
+        grid[players[i].x][players[i].y] = i + 1;
       }
       if (first) {
-        grid[players[i].pidx()] = i + 1;
+        grid[players[i].px][players[i].py] = i + 1;
         alive.insert(i);
       }
-      //   cerr << "i:" << i << " x," << players[i].x << " y," << players[i].y << " px," << players[i].px << " py,"
-      //   << players[i].py << endl;
+      //   cerr << "i:" << i << " x," << players[i].x << " y," << players[i].y << " px," << players[i].px << " py," <<
+      //   players[i].py << endl;
     }
     first = false;
     // cerr << alive.size() << " alive" << endl;
@@ -172,7 +173,7 @@ struct Board {
 
   void endTurn() {
     for (auto p : alive) {
-      grid[players[p].idx()] = 0;
+      grid[players[p].x][players[p].y] = 0;
     }
   }
 
@@ -183,7 +184,7 @@ struct Board {
     for (auto d : dir) {
       Pos c(p + d);
       //   cerr << c.x<<";"<<c.y<<"|"<<c.wall<< endl;
-      if (inBoard(c) and grid[c.idx()] == 0) {
+      if (inBoard(c) and grid[c.x][c.y] == 0) {
         n.push_back(c);
       }
     }
@@ -218,9 +219,9 @@ struct Board {
 
     set<Pos> path;
     path.insert(start);
-    int res(0);
+    int res(0), count(0);
 
-    while (!frontier.empty()) {
+    while (!frontier.empty() and count < 100) {
       auto current = frontier.front();
       frontier.pop();
 
@@ -231,27 +232,31 @@ struct Board {
           res++;
         }
       }
+      ++count;
     }
     return res;
   }
 
   int voronoi(const array<Pos, 4> &node) {
     array<int, 4> scores = {0};
-    int id(0);
-    for (auto g : grid) {
-      if (g) continue;
-      int player = 0, dist = INT_MAX;
-      for (int i = 0; i < N; ++i) {
-        Pos local{id % W, id / W};
-        if ((alive.count(i)) and (dist == INT_MAX or local.dist(node[i]) < dist)) {
-          dist = local.dist(node[i]);
-          player = i;
+    for (int c(0); c < W; ++c) {
+      for (int r(0); r < H; ++r) {
+        if (grid[c][r]) {
+          continue;
         }
+        int player = 0, dist = INT_MAX;
+        for (int i = 0; i < N; ++i) {
+          Pos local{c, r};
+          if ((alive.count(i)) and (dist == INT_MAX or local.dist(node[i]) < dist)) {
+            dist = local.dist(node[i]);
+            player = i;
+          }
+        }
+        // cerr << player << " for " << c << ";" << r << endl;
+        scores[player] += 1;
       }
-      scores[player] += 1;
-      ++id;
     }
-    // cerr << P << ";" << scores[P] << ";" << scores[1 - P] << endl;
+    cerr << scores[0] << ";" << scores[1] << ";" << scores[2] << endl;
     return scores[P];
   }
 
@@ -263,6 +268,7 @@ struct Board {
     // }
     return path;  //.size()
   }
+  // bool corridor()
 
   int heuristic(const array<Pos, 4> &node, bool trace = false) {
     int v = voronoi(node);
@@ -271,13 +277,19 @@ struct Board {
     return v + s;
   }
 
-  int minmax(array<Pos, 4> &node, int depth, int player, Pos &action, int &alpha, int &beta) {
+  int minmax(array<Pos, 4> &node, int depth, int player, Pos &action, int alpha, int beta) {
     auto mine = neighbors(node[P]);
-    // cerr << "p" << player << " " << node[P] << endl;
+    string s("");
+    for (int i(0); i < N; ++i) {
+      auto t = node[i];
+      s += "p:" + to_string(i) + " [" + to_string(t.x) + "," + to_string(t.y) + "] ";
+    }
+    // cerr << depth << "MM" << player << " " << node[player] << endl;
+    cerr << "D " << depth << " " << s << endl;
     if (depth == 0 or mine.size() == 0 or TIME > 0.085) {
       int res = heuristic(node, true);
       if (mine.size() == 0) res -= 1000;
-      cerr << "  f " << node[P] << " " << node[1 - P] << " " << res << endl;
+      cerr << "  leaf " << node[P] << " " << node[1 - P] << " " << res << endl;
       // display();
       return res;
     }
@@ -286,16 +298,17 @@ struct Board {
       int value = -10000000;
       for (auto &n : neighbors(node[player])) {
         node[player] = n;
-        grid[n.idx()] = player + 1;
+        grid[n.x][n.y] = player + 1;
         int m = minmax(node, depth - 1, (player + 1) % (alive.size()), action, alpha, beta);
         if (m >= value) {
           value = m;
           if (depth == maxDepth) action = n;
         }
-        // cerr << "n0 " << n << " " << value<<" " <<alpha<<" "<<beta << endl;
+        // cerr << " max " << n << " value " << value<<" a " <<alpha<<" b "<<beta << endl;
         node[player] = current;
-        grid[n.idx()] = 0;
+        grid[n.x][n.y] = 0;
         if (value > beta) {
+          // cerr << "beta cut " << beta << " "<<value << endl;
           return value;
         }
         alpha = max(alpha, value);
@@ -305,12 +318,14 @@ struct Board {
       int value = 10000000;
       for (auto &n : neighbors(node[player])) {
         node[player] = n;
-        grid[n.idx()] = player + 1;
+        grid[n.x][n.y] = player + 1;
         value = min(value, minmax(node, depth - 1, (player + 1) % (alive.size()), action, alpha, beta));
-        // cerr << " n1 " << n <<" " <<alpha<<" "<<beta << endl;
+        // cerr << " min " << n <<"value "<<value<<" a " <<alpha<<" b "<<beta << endl;
         node[player] = current;
-        grid[n.idx()] = 0;
-        if (value < alpha) {
+        grid[n.x][n.y] = 0;
+        if (alpha > value) {
+          // cerr << "alpha cut " << alpha << " "<<value << endl;
+          // continue;
           return value;
         }
         beta = min(beta, value);
@@ -327,6 +342,11 @@ struct Board {
   void bestPos() {
     Pos action;
     Pos saved(players[P]);
+    auto n = neighbors(players[P]);
+    if (n.size() == 1) {
+      cout << adir[n[0] - saved] << endl;
+      return;
+    }
     int alpha(-10000000), beta(10000000);
     int res = minmax(players, maxDepth, P, action, alpha, beta);
     // cerr << "res " << res << " " << action << endl;
@@ -356,7 +376,7 @@ int main() {
   while (1) {
     theBoard.init();
     Timer theClock;
-    // theBoard.display();
+    theBoard.display();
     theBoard.bestPos();
     theBoard.dump();
   }

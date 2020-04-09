@@ -1,4 +1,7 @@
 .idea*
-.gradle*
+*gradle*
 .vscode*
+build/*
 venv/*
+**/monExe*
+*.out*
