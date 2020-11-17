@@ -62,14 +62,15 @@ ostream &operator<<(ostream &os, const Point &c) {
   return os;
 }
 
-typedef enum chifu { ROCK = 0, PAPER, SCISSORS } chifu_t;
-unordered_map<chifu_t, string> chifumi = {{ROCK, "ROCK"}, {PAPER, "PAPER"}, {SCISSORS, "SCISSORS"}};
-unordered_map<string, chifu_t> shifumi = {{"ROCK", ROCK}, {"PAPER", PAPER}, {"SCISSORS", SCISSORS}};
+typedef enum chifu { ROCK = 0, PAPER, SCISSORS, DEAD } chifu_t;
+unordered_map<chifu_t, string> chifumi = {{ROCK, "ROCK"}, {PAPER, "PAPER"}, {SCISSORS, "SCISSORS"}, {DEAD, "DEAD"}};
+unordered_map<string, chifu_t> shifumi = {{"ROCK", ROCK}, {"PAPER", PAPER}, {"SCISSORS", SCISSORS}, {"DEAD", DEAD}};
 struct Cell : Point {
-  int value;
+  int value, cooldown;
   bool visited, occupied;
-  inline Cell() : value(0), visited(false), occupied(false), Point{} {}
-  inline Cell(int x, int y) : value(0), visited(false), occupied(false), Point{x, y} {}
+  vector<Point> edges;
+  inline Cell() : value(0), cooldown(0), visited(false), occupied(false), Point{} {}
+  inline Cell(int x, int y) : value(0), cooldown(0), visited(false), occupied(false), Point{x, y} {}
   virtual void serialize(ostream &os) const {
     Point::serialize(os);
     os << ", va:" << value << ", v:" << visited << " ,o:" << occupied;
@@ -190,7 +191,7 @@ struct Board {
   vector<Point> dirw = {Point{-1, 0}, Point{0, -1}, Point{1, 0}, Point{0, 1}};
   vector<Point> dirx = {Point{0, -1}, Point{-1, 0}, Point{0, 1}, Point{1, 0}};
   unordered_set<Point> walls, cross, chosen, valued, bigs;
-  array<multimap<int, Point>, 5> bullets;
+  array<multimap<int, Point>, 5> bullets, crosses;
   array<multimap<int, Pac>, 5> ennemies;
   unordered_map<Point, card_t> cards = {
       {Point{-1, 0}, WEST}, {Point{1, 0}, EAST}, {Point{0, 1}, SOUTH}, {Point{0, -1}, NORTH}};
@@ -224,23 +225,25 @@ struct Board {
   void locateCross() {
     for (size_t x = 0; x < width; x++) {
       for (size_t y = 0; y < height; y++) {
-        auto n = neighbors(grid[x][y]);
+        auto n = neighbors(Point(grid[x][y]));
         if (n.size() > 2) {
           cross.insert(Point{x, y});
+          grid[x][y].edges = n;
         }
       }
     }
   }
   void turnInit() {
     ++nturn;
-    int xx(5), yy(3);
+    int xx(5), yy(7);
     Point pp(xx, yy);
     cerr << nturn << "init " << grid[xx][yy] << " " << walls.count(pp) << " |" << passable(pp) << endl;
     for (auto &b : bullets) b.clear();
+    for (auto &c : crosses) c.clear();
     for (auto &e : ennemies) e.clear();
     chosen.clear();
     valued.clear();
-    bigs.clear();
+    // bigs.clear();
     inSight = false;
     cin >> myScore >> hisScore;
     cin.ignore();
@@ -256,7 +259,7 @@ struct Board {
       cerr << mine << "/" << id << "/" << s << "/" << a << endl;
       cin.ignore();
       if (mine) {
-        if (!firstTurn) {
+        if (!firstTurn or Point(moi[id]) != Point(x, y)) {
           moi[id].from.x = moi[id].x - x;
           moi[id].from.y = moi[id].y - y;
         }
@@ -269,19 +272,20 @@ struct Board {
         moi[id].type = shifumi[t];
         moi[id].action = NONE;
         moi[id].eaten = 0;
-        grid[x][y].occupied = true;
         seen.push_back(id);
         if (firstTurn) {
           ++nbPac;
           lui[id].x = width - 1 - x;
           lui[id].y = y;
           grid[lui[id].x][lui[id].y].visited = true;
+          grid[lui[id].x][lui[id].y].occupied = true;
           lui[id].i = id;
           lui[id].s = s;
           lui[id].ability = a;
           lui[id].type = shifumi[t];
         }
       } else {
+        grid[lui[id].x][lui[id].y].occupied = false;
         lui[id].x = x;
         lui[id].y = y;
         lui[id].i = id;
@@ -293,6 +297,8 @@ struct Board {
       }
       grid[x][y].value = 0;
       grid[x][y].visited = true;
+      grid[x][y].occupied = true;
+      setCrosses(moi[id]);
     }
     killPac(seen);
     resetTargets(viewed);
@@ -303,29 +309,21 @@ struct Board {
       int x, y, value;
       cin >> x >> y >> value;
       cin.ignore();
-      if (grid[x][y].value != -1) grid[x][y].value = value;
+      if (grid[x][y].cooldown > 0) grid[x][y].cooldown--;
+      grid[x][y].value = value;
       valued.insert(Point{x, y});
       // assign best bullets now
-      if (grid[x][y].value == 10) {
+      if (firstTurn and grid[x][y].value == 10) bigs.insert(Point(x, y));
+      if (grid[x][y].value == 10 and grid[x][y].cooldown == 0) {
         assignBigs(x, y);
       }
     }
     updateValues();
   }
-  void assignBigs(int x, int y) {
-    cerr << "bullet " << x << "," << y << grid[x][y] << endl;
-    int max(width), idx(-1);
-    nearest(moi, Point(x, y), &max, &idx);
-    cerr << " found " << idx << " nearest " << endl;
-    nearest(lui, Point(x, y), &max, &idx, false);
-    if (idx < 42) {
-      cerr << "  assign" << endl;
-      moi[idx].target = Point{x, y};
-      moi[idx].action = MOVE;
-      moi[idx].eaten = 1;
-    } else {
-      cerr << "  dismiss " << x << " " << y << endl;
-      grid[x][y].value = -1;
+  void setCrosses(const Pac &p) {
+    for (auto c : cross) {
+      auto d = a_star(Point(p), c).size();
+      if (d > 0) crosses[p.i].insert({d, c});
     }
   }
   void updateValues() {
@@ -343,20 +341,8 @@ struct Board {
         }
       }
     }
-  }
-  void nearest(const array<Pac, 5> &p, const Point &t, int *max, int *idx, bool me = true) {
-    for (auto m : p) {
-      if (m.i == -1 or m.action != NONE) continue;
-      auto d = a_star(Point(m), t).size();
-      // cerr << m << " dist " << *max << " d " << d << endl;
-      if (d > 0 and d <= *max) {
-        *max = d;
-        if (me) {
-          *idx = m.i;
-        } else {
-          *idx = 42;
-        }
-      }
+    for (auto b : bigs) {
+      if (!valued.count(b)) grid[b.x][b.y].value = 0;
     }
   }
   void killPac(const vector<int> &seen) {
@@ -389,9 +375,9 @@ struct Board {
   inline int heuristic(Point a, Point b) { return abs(a.x - b.x) + abs(a.y - b.y); }
 
   template <typename Location>
-  bool passable(const Location &p, bool first = true) {
+  bool passable(const Location &p, bool occup = false) {
     return p.x >= 0 and p.x < width and p.y >= 0 and p.y < height and !walls.count(Point(p)) and
-           !grid[p.x][p.y].occupied;
+           (occup or !grid[p.x][p.y].occupied);
   }
   card_t cardTrans(const card_t &c) {
     card_t v = NORTH;
@@ -412,7 +398,7 @@ struct Board {
     return v;
   }
   template <typename Location>
-  vector<Location> neighbors(const Location &p, card_t card = NORTH) {
+  vector<Location> neighbors(const Location &p, card_t card = NORTH, bool occup = false) {
     vector<Location> res;
     auto vec = dirn;  // isDirn ? dirn : dire;
     auto rot = card;  // isDirn ? card : cardTrans(card);
@@ -422,7 +408,7 @@ struct Board {
       // if (p.x == 17 and p.y == 9) cerr << "       ]" << n << endl;
       if (n.x == -1) n.x = width - 1;
       if (n.x == width) n.x = 0;
-      if (passable(n)) res.push_back(n);
+      if (passable(n, occup)) res.push_back(n);
     }
     return res;
   }
@@ -452,6 +438,29 @@ struct Board {
     return start;
   }
 
+  template <typename Location>
+  Location bfsCross(Location start) {
+    std::queue<Location> frontier;
+    frontier.push(start);
+
+    std::unordered_map<Location, Location> came_from;
+    came_from[start] = start;
+
+    while (!frontier.empty()) {
+      Location current = frontier.front();
+      frontier.pop();
+
+      if (cross.count(current) and grid[current.x][current.y].edges.size() > 0) return current;
+
+      for (Location next : neighbors(current)) {
+        if (came_from.find(next) == came_from.end()) {
+          frontier.push(next);
+          came_from[next] = current;
+        }
+      }
+    }
+    return start;
+  }
   template <typename Location>
   Location dfs(Location start, card_t card = NORTH, int depth = 3) {
     std::stack<Location> frontier;
@@ -519,6 +528,61 @@ struct Board {
     }
     return path;
   }
+  void assignBigs(int x, int y) {
+    cerr << "bullet " << x << "," << y << grid[x][y] << endl;
+    int max(width), idx(-1);
+    nearest(moi, Point(x, y), &max, &idx);
+    cerr << " found " << idx << " nearest " << endl;
+    nearest(lui, Point(x, y), &max, &idx, false);
+    if (idx < 42) {
+      cerr << "  assign" << endl;
+      moi[idx].target = Point{x, y};
+      moi[idx].action = MOVE;
+      moi[idx].eaten = 1;
+      auto path = a_star(Point(moi[idx]), moi[idx].target);
+      if (moi[idx].s > 0 and path.size() == 1) {
+        int mx(moi[idx].x), my(moi[idx].y);
+        moi[idx].x = x;
+        moi[idx].y = y;
+        moi[idx].target = nextCell(moi[idx], Point(mx, my));
+        moi[idx].x = mx;
+        moi[idx].y = my;
+      }
+    } else {
+      cerr << "  dismiss " << x << " " << y << " " << 42 - idx << endl;
+      grid[x][y].cooldown = a_star(Point(lui[42 - idx]), Point(x, y)).size();
+      lui[42 - idx].action = MOVE;
+    }
+  }
+  void nearest(const array<Pac, 5> &p, const Point &t, int *max, int *idx, bool me = true) {
+    for (auto m : p) {
+      if (m.i == -1 or (m.action != NONE)) continue;
+      auto d = a_star(Point(m), t).size();
+      // cerr << m << " dist " << *max << " d " << d << endl;
+      if (d > 0 and d < *max) {
+        *max = d;
+        if (me) {
+          *idx = m.i;
+        } else {
+          *idx = 42 + m.i;
+        }
+      }
+    }
+  }
+  void findCross() {
+    for (auto &m : moi) {
+      if (m.i == -1 or m.action != NONE) continue;
+      m.target = bfsCross(Point(m));
+      for (auto c : crosses[m.i]) {
+        if (grid[c.second.x][c.second.y].edges.size() > 0) {
+          m.target = grid[c.second.x][c.second.y].edges.back();
+          m.action = MOVE;
+          grid[c.second.x][c.second.y].edges.pop_back();
+        }
+      }
+      if (m.action == NONE or a_star(Point(m), m.target).size() == 1) continue;
+    }
+  }
   void findNearest() {
     cerr << "toFind " << endl;
     vector<choice_t> c = {RIGHT, LEFT, RIGHT, LEFT, RIGHT};
@@ -526,58 +590,95 @@ struct Board {
       if (m.i == -1 or m.action != NONE) continue;
       auto previous = Point(m) + m.from;
       auto aa = a_star(Point(m), previous);
+      cerr << aa.size() << "initial p " << previous << endl;
       if (aa.size() > 0) previous = aa[0];
-      auto pill = nextCell(Point(m), previous);
+      Point pill = nextCell(m, previous);
       if (grid[pill.x][pill.y].value != 0) ++m.eaten;
       if (m.s > 0) {
-        pill = nextCell(pill, Point(m));
+        int x(m.x), y(m.y);
+        m.x = pill.x;
+        m.y = pill.y;
+        pill = nextCell(m, Point(x, y), false);
         if (grid[pill.x][pill.y].value != 0) ++m.eaten;
+        m.x = x;
+        m.y = y;
       }
       // m.target = dfs(Point(m), cards[pill]);
       m.target = pill;
       m.action = MOVE;
     }
   }
-  void noPill() {
-    cerr << "no pill " << endl;
-    for (auto &m : moi) {
-      if (m.i == -1 or m.action != MOVE or m.eaten != 0) continue;
-      auto t = bfs(Point(m));
-      cerr << " <<" << m.i << " can see bullet " << t << endl;
-      if (t.x != m.x or t.y != m.y) m.target = t;
+  Point nextCell(Pac &m, const Point &previous, bool first = true) {
+    Point moi(m);
+    auto from = previous - moi;
+    // int lcard = (m.i % 2) ? cards[from] + 1 : cardTrans(cards[from]) + 1;
+    int lcard = cards[from] + 1;
+    lcard = lcard % 4;
+    bool canMove = neighbors(m).size() > 1;
+    cerr << "can move " << canMove << endl;
+    if (canMove) walls.insert(previous);
+    auto pills = neighbors(moi, static_cast<card_t>(lcard));
+    cerr << m.i << "> " << first << ".from " << previous << "/" << from << lcard << " " << pills.size() << endl;
+    if (pills.size() == 0) {
+      if (canMove) walls.erase(previous);
+      if (first) {
+        auto v = neighbors(moi, static_cast<card_t>(lcard), true);
+        cerr << " bloque " << v.size() << " " << v[0] << endl;
+        if (v.size() > 0) return v[0];
+      } else {
+        return moi;
+      }
     }
-  }
-  Point nextCell(const Point &m, const Point &previous) {
-    auto v = neighbors(m);
-    if (v.size() == 0) return m;
-    if (v.size() == 1) return v[0];
-    walls.insert(previous);
-    int lcard = (m.i % 2) ? cards[previous] + 1 : cardTrans(cards[previous]) + 1;
-    cerr << " from " << previous << lcard << endl;
-    auto pills = neighbors(m, static_cast<card_t>(lcard));
+    if (pills.size() == 1) {
+      if (canMove) walls.erase(previous);
+      return pills[0];
+    }
     Point pill{-2, 0};
+    int max = 0;
     for (auto p : pills) {
-      if (grid[p.x][p.y].value > 0) {
-        cerr << "   pill " << p.x << " " << p.y << ":" << grid[p.x][p.y].value << endl;
+      int score = 0;
+      auto n = p;
+      auto d = p - moi;
+      while (passable(n) and !grid[n.x][n.y].occupied) {
+        int value = grid[n.x][n.y].value == -1 ? 10 : grid[n.x][n.y].value;
+        score += value;
+        n = n + d;
+      }
+      if (score > max) {
+        cerr << "  eat " << score << " in " << p << endl;
         pill = p;
-        break;
+        max = score;
+        m.eaten++;
       }
     }
     if (pill.x == -2) {
       for (auto p : pills) {
         if (!grid[p.x][p.y].visited) {
-          cerr << "   unk " << p.x << " " << p.y << ":" << grid[p.x][p.y].visited << endl;
+          cerr << "  unk " << p.x << " " << p.y << ":" << grid[p.x][p.y].visited << endl;
           pill = p;
           break;
         }
       }
     }
     if (pill.x == -2) pill = pills[0];
-    cerr << "    >" << m.i << " next on " << pill << endl;
-    walls.erase(previous);
+    cerr << " next on " << pill << endl;
+    if (canMove) walls.erase(previous);
     return pill;
   }
 
+  void noPill() {
+    cerr << "no pill " << endl;
+    for (auto &m : moi) {
+      if (m.i == -1 or m.action != MOVE or m.eaten != 0) continue;
+      auto t = bfs(Point(m));
+      if (t == Point(m)) {
+        cerr << "recall" << endl;
+        t = bfs(Point(m), false);
+      }
+      cerr << " <<" << m.i << " can see bullet " << t << endl;
+      if (t.x != m.x or t.y != m.y) m.target = t;
+    }
+  }
   void toSwitch() {
     cerr << "toSwitch " << endl;
     for (auto &m : moi) {
@@ -642,25 +743,25 @@ struct Board {
       for (auto &m : moi) {
         if (m.i == -1) continue;
         for (auto e : lui) {
-          if (e.i == -1) continue;
+          if (e.i == -1 or e.type == DEAD) continue;
           if (canCatch(e, m)) {
             cerr << " e#" << e.i << " can see " << m.i << endl;
             if (m.ability == 0) {
-              if (m.type == beatChi(e)) {
-                m.new_type = e.type;
-                m.action = SWITCH;
-                // m.ability = 10;
-              }
+              m.new_type = beatChi(e);
+              m.action = SWITCH;
+              // m.ability = 10;
             } else {
-              auto p = a_star(m, e);
-              cerr << m.i << " flee from " << e.i << "/" << p.size() << endl;
-              if (p.size() > 0) {
-                walls.insert(Point(p[0]));
-                m.target = dfs(Point(m), cards[dirn[nturn % 4]]);
-                walls.erase(Point(p[0]));
-              } else {
-                m.target = Point{0, 0};
+              int d(0);
+              Point t(m);
+              auto ne = neighbors(m);
+              for (auto n : ne) {
+                if (n.dist(e) > 0) {
+                  t = n;
+                  d = n.dist(e);
+                }
               }
+              cerr << m.i << " flee from " << e.i << "/" << t << endl;
+              m.target = t;
               m.action = MOVE;
             }
           }
@@ -673,16 +774,31 @@ struct Board {
   bool canCatch(Pac &m, const Pac &e) const {
     // cerr << "  #" << m.i << m.type << " " << e.type + PAPER << " s:" << m.s << " " << e.s << " " << m.dist(e) <<
     // endl;
-    cerr << "   x " << m.ability << ":" << m.type << ":" << beatChi(e) << ":" << canSee(m, e) << endl;
-    return (m.ability == 0 or m.type == beatChi(e)) and ((canSee(m, e) or firstTurn) and m.dist(e) < 3);
+    cerr << " <" << e.i << "<" << m.i << "   x " << m.ability << ":" << m.type << ":" << beatChi(e) << ":"
+         << canSee(m, e) << endl;
+    return (m.ability == 0 or m.type == beatChi(e)) and
+           ((canSee(m, e) or firstTurn) and (m.dist(e) <= m.s - e.s or m.dist(e) == 1));
   }
   void toSpeed() {
     cerr << "toSpeed " << endl;
     for (auto &m : moi) {
       if (m.i == -1) continue;
-      if (m.action == NONE or (m.ability == 0 and !inSight)) {
+      if (m.action == NONE or (m.ability == 0 and !inSight) or nturn == 1) {
         cerr << " speed " << m.i << endl;
         m.action = SPEED;
+      }
+    }
+  }
+  void canKill() {
+    for (auto &m : moi) {
+      if (m.i == -1) continue;
+      for (auto e : lui) {
+        if (e.i == -1) continue;
+        if (m.dist(e) == 1 and e.ability > 0 and m.type == beatChi(e)) {
+          cerr << "xkill " << m.i << ">" << e.i << endl;
+          m.action = MOVE;
+          m.target = Point(e);
+        }
       }
     }
   }
@@ -692,8 +808,9 @@ struct Board {
     findNearest();
     // toSwitch();
     toSpeed();
-    escape();
     noPill();
+    canKill();
+    escape();
     preventCollisions();
   }
   void preventCollisions() {
@@ -701,6 +818,9 @@ struct Board {
     for (auto &m : moi) {
       if (m.i == -1 or m.action != MOVE) continue;
       auto p = a_star(Point(m), m.target);
+      if (p.size() > 2) {
+        p = vector<Point>(p.begin(), p.begin() + 2);
+      }
       Point t(m);
       for (auto c : p) {
         if (ex.count(c)) {
